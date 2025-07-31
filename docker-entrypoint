@@ -1,4 +1,5 @@
-#!/usr/bin/env sh
+#!/bin/bash
+
 
 set -e
 # shellcheck disable=2039
@@ -76,12 +77,13 @@ restart_container() {
 }
 
 notify_webhook() {
-  local text="$@"
-
+  local container="$1"
+  local action="$2"
+  local timestamp=$(date "+%Y-%m-%dT%T")
   if [ -n "$WEBHOOK_URL" ]
   then
     # execute webhook requests as background process to prevent healer from blocking
-    curl -s -X POST -H "Content-type: application/json" -d "$(generate_webhook_payload $text)"  $WEBHOOK_URL
+    curl -s -X POST -H "Content-type: application/json" -H "X-Event-Type: autoheal-restart" -H "X-Container-Name: $container" -H "X-Restart-Reason: $action" -d "$(generate_webhook_payload $container $action $timestamp)"  $WEBHOOK_URL
   fi
 
   if [ -n "$APPRISE_URL" ]
@@ -101,10 +103,14 @@ notify_post_restart_script() {
 
 # https://towardsdatascience.com/proper-ways-to-pass-environment-variables-in-json-for-curl-post-f797d2698bf3
 generate_webhook_payload() {
-  local text="$@"
+  local container="$1"
+  local action="$2"
+  local timestamp="$3"
   cat <<EOF
 {
-  "$WEBHOOK_JSON_KEY":"$text"
+  "container": "$container",
+  "action": "$action",
+  "timestamp": "$timestamp"
 }
 EOF
 }
@@ -164,9 +170,9 @@ then
         if ! restart_container "$CONTAINER_ID" "$TIMEOUT"
         then
           echo "$DATE Restarting container $CONTAINER_SHORT_ID failed" >&2
-          notify_webhook "Container ${CONTAINER_NAME:1} (${CONTAINER_SHORT_ID}) found to be unhealthy. Failed to restart the container!" &
+          notify_webhook "${CONTAINER_NAME:1}" "error" &
         else
-          notify_webhook "Container ${CONTAINER_NAME:1} (${CONTAINER_SHORT_ID}) found to be unhealthy. Successfully restarted the container!" &
+          notify_webhook "${CONTAINER_NAME:1}" "restart" &
         fi
         notify_post_restart_script "$CONTAINER_NAME" "$CONTAINER_SHORT_ID" "$CONTAINER_STATE" "$TIMEOUT" &
       fi
